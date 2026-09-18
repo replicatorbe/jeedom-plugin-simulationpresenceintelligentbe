@@ -135,9 +135,9 @@ try {
      */
     if (init('action') == 'learning') {
         $eqLogic = $getGroup(init('id'));
-        $learning = $eqLogic->getConfiguration('learning', array());
-        $depth = isset($learning['depth']) ? (int) $learning['depth'] : simulationpresenceintelligentbe::DEFAULT_DEPTH;
-        $minDays = isset($learning['min_days']) ? (int) $learning['min_days'] : simulationpresenceintelligentbeProfile::MIN_DAYS;
+        $learning = simulationpresenceintelligentbe::cleanLearning($eqLogic->getConfiguration('learning'));
+        $depth = $learning['depth'];
+        $minDays = $learning['min_days'];
 
         /* Le jour de semaine d'aujourd'hui, parce que c'est lui qui décidera
          * ce soir : annoncer « rejouée » d'après l'ensemble des journées alors
@@ -178,7 +178,31 @@ try {
                 'value'      => simulationpresenceintelligentbeLamps::readState($lamp['state']),
             );
         }
-        ajax::success(array('depth' => $depth, 'min_days' => $minDays, 'lamps' => $rows));
+        /* Ce que la fenêtre donne aujourd'hui : une borne écrite « coucher-30 »
+         * ne veut rien dire tant qu'on ne voit pas l'heure qu'elle vaut ce
+         * soir. */
+        $sun = simulationpresenceintelligentbeSun::sun(time(), config::byKey('info::latitude'), config::byKey('info::longitude'));
+        $window = simulationpresenceintelligentbe::cleanWindow($eqLogic->getConfiguration('window'));
+        $quiet = 0;
+        foreach ($eqLogic->getConfiguration('lamps', array()) as $lamp) {
+            $profile = $eqLogic->profileFor($lamp);
+            if (isset($profile['quiet'])) {
+                $quiet = (int) $profile['quiet'];
+                break;
+            }
+        }
+
+        ajax::success(array(
+            'depth'    => $depth,
+            'min_days' => $minDays,
+            'lamps'    => $rows,
+            'quiet'    => $quiet,
+            'anchor'   => $learning['anchor'],
+            'window'   => array(
+                'start' => simulationpresenceintelligentbeSun::describeBound($window['start'], $sun),
+                'end'   => simulationpresenceintelligentbeSun::describeBound($window['end'], $sun),
+            ),
+        ));
     }
 
     /*
@@ -208,8 +232,12 @@ try {
             $steps = array();
             foreach ($entry['events'] as $event) {
                 $steps[] = array(
-                    'time'  => simulationpresenceintelligentbeSun::minuteToTime($event['t']),
-                    'value' => (int) $event['v'],
+                    'time'   => simulationpresenceintelligentbeSun::minuteToTime($event['t']),
+                    /* La minute brute sert à dessiner la journée en barres :
+                     * la calculer dans le navigateur en relisant « HH:MM »
+                     * ferait deux vérités pour une seule donnée. */
+                    'minute' => (int) $event['t'],
+                    'value'  => (int) $event['v'],
                 );
             }
             $lamps[] = array(
@@ -222,7 +250,20 @@ try {
                 'steps'    => $steps,
             );
         }
-        ajax::success(array('date' => $date, 'learned' => $plan['learned'], 'invented' => $plan['invented'], 'lamps' => $lamps));
+        $sun = simulationpresenceintelligentbeSun::sun(strtotime($date . ' 12:00:00'), config::byKey('info::latitude'), config::byKey('info::longitude'));
+        $window = simulationpresenceintelligentbe::cleanWindow($eqLogic->getConfiguration('window'));
+        ajax::success(array(
+            'date'     => $date,
+            'learned'  => $plan['learned'],
+            'invented' => $plan['invented'],
+            'lamps'    => $lamps,
+            'window'   => array(
+                'start' => simulationpresenceintelligentbeSun::resolveBound($window['start'], $sun, 0),
+                'end'   => simulationpresenceintelligentbeSun::resolveBound($window['end'], $sun, simulationpresenceintelligentbeSun::DAY_MINUTES - 1),
+            ),
+            'sunrise'  => $sun['sunrise'],
+            'sunset'   => $sun['sunset'],
+        ));
     }
 
     /* Retirer le plan du jour : le prochain passage en tire un autre. Utile
@@ -278,6 +319,43 @@ try {
             'met'    => ($met === null) ? null : (($met) ? 1 : 0),
             'manual' => $eqLogic->getConfiguration('manual', ''),
             'active' => ($eqLogic->getConfiguration('active', 0) == 1) ? 1 : 0,
+        ));
+    }
+
+    /*
+     * La répétition accélérée. Elle allume et éteint réellement les lampes :
+     * d'où le refus quand la simulation tourne déjà, et la remise en place
+     * systématique à la fin.
+     */
+    if (init('action') == 'rehearse') {
+        unautorizedInDemo();
+        $eqLogic = $getGroup(init('id'));
+        if ($eqLogic->getConfiguration('active', 0) == 1) {
+            throw new Exception(__('La simulation est en cours : arrêtez-la avant de répéter.', __FILE__));
+        }
+        $duration = max(30, min(600, (int) init('duration', 120)));
+        $rehearsal = $eqLogic->rehearsalPlan($duration);
+        if (count($rehearsal['steps']) == 0) {
+            throw new Exception(__('Rien à jouer aujourd\'hui : le plan est vide.', __FILE__));
+        }
+        ajax::success($rehearsal);
+    }
+
+    if (init('action') == 'rehearseStep') {
+        unautorizedInDemo();
+        $eqLogic = $getGroup(init('id'));
+        ajax::success($eqLogic->rehearsalStep(init('eq'), init('value')));
+    }
+
+    if (init('action') == 'rehearseStop') {
+        unautorizedInDemo();
+        $eqLogic = $getGroup(init('id'));
+        $remises = $eqLogic->rehearsalStop();
+        ajax::success(array(
+            'restored' => $remises,
+            'summary'  => ($remises == 0)
+                ? __('Répétition terminée ; les lampes n\'avaient pas bougé.', __FILE__)
+                : $remises . ' ' . __('lampe(s) remise(s) comme elles étaient.', __FILE__),
         ));
     }
 

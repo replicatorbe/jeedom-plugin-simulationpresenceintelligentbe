@@ -90,6 +90,87 @@ class simulationpresenceintelligentbeSun {
         return sprintf('%02d:%02d', $hours, $minutes);
     }
 
+    /*
+     * Une borne de fenêtre horaire : une heure fixe, ou une heure de soleil.
+     *
+     * « Rien avant 07:00 » n'a aucun sens en juin, où le soleil se lève à
+     * 05 h 31 : la fenêtre censée protéger les nuits interdit alors deux heures
+     * de plein jour. Une borne peut donc s'écrire « sunset-30 » ou
+     * « sunrise+15 », et suivre le soleil toute l'année.
+     *
+     * Le mot-clé est rangé en anglais, comme les tags du coeur (#sunset#), mais
+     * la saisie accepte aussi le français : ce qui est stocké ne dépend pas de
+     * la langue de celui qui l'a tapé.
+     */
+    const BOUND_SUNSET  = 'sunset';
+    const BOUND_SUNRISE = 'sunrise';
+
+    public static function cleanBound($_value) {
+        $value = trim((string) $_value);
+        if ($value === '') {
+            return '';
+        }
+
+        $time = self::cleanTime($value);
+        if ($time !== '') {
+            return $time;
+        }
+
+        $normalise = mb_strtolower(str_replace(array(' ', 'é'), array('', 'e'), $value), 'UTF-8');
+        /* Cinq chiffres et non trois : un décalage aberrant doit être compris
+         * puis borné, pas rejeté en silence — sinon la saisie est ignorée et
+         * l'ancienne valeur reste, sans que rien ne le dise. */
+        if (!preg_match('/^(sunset|coucher|sunrise|lever)([+-]\d{1,5})?$/', $normalise, $matches)) {
+            return '';
+        }
+        $mot = (in_array($matches[1], array('sunset', 'coucher'))) ? self::BOUND_SUNSET : self::BOUND_SUNRISE;
+        $offset = isset($matches[2]) ? (int) $matches[2] : 0;
+        /* Douze heures de décalage suffisent à tout usage réel et empêchent
+         * qu'un réglage absurde ouvre la fenêtre la veille. */
+        $offset = max(-720, min(720, $offset));
+        return $mot . (($offset >= 0) ? '+' : '') . $offset;
+    }
+
+    /*
+     * La borne, en minutes, pour un jour dont on connaît le soleil.
+     *
+     * Rend $_default quand la borne est vide, illisible, ou quand le soleil ne
+     * se lève pas ce jour-là : une fenêtre qui n'existe pas doit se replier sur
+     * quelque chose, sinon la simulation s'arrête au cercle polaire.
+     */
+    public static function resolveBound($_bound, $_sun, $_default) {
+        $bound = self::cleanBound($_bound);
+        if ($bound === '') {
+            return $_default;
+        }
+
+        $minute = self::timeToMinute($bound);
+        if ($minute !== null) {
+            return $minute;
+        }
+
+        if (!preg_match('/^(sunset|sunrise)([+-]\d{1,3})$/', $bound, $matches)) {
+            return $_default;
+        }
+        $reference = isset($_sun[$matches[1]]) ? $_sun[$matches[1]] : null;
+        if ($reference === null) {
+            return $_default;
+        }
+        return max(0, min(self::DAY_MINUTES - 1, $reference + (int) $matches[2]));
+    }
+
+    /* Une borne telle qu'on l'affiche : l'heure fixe telle quelle, l'heure de
+     * soleil résolue et annotée, pour que l'utilisateur voie ce que son réglage
+     * donne aujourd'hui. */
+    public static function describeBound($_bound, $_sun) {
+        $bound = self::cleanBound($_bound);
+        if ($bound === '' || self::timeToMinute($bound) !== null) {
+            return $bound;
+        }
+        $minute = self::resolveBound($bound, $_sun, null);
+        return ($minute === null) ? $bound : $bound . ' (' . self::minuteToTime($minute) . ')';
+    }
+
     /* HH:MM vers la minute du jour, ou null si l'heure est vide ou illisible. */
     public static function timeToMinute($_value) {
         $time = self::cleanTime($_value);

@@ -12,6 +12,13 @@ Faire croire que la maison est habitée, en rejouant ce qu'elle fait d'habitude.
   active l'historisation de l'état des lampes choisies. Sans historique, il n'y
   a rien à rejouer — et l'historique ne commence qu'au moment où on coche la
   case.
+- **Les habitudes suivent le soleil.** Une soirée apprise en septembre n'est
+  pas rejouée à l'horloge en décembre : le plan est replacé sur le coucher et
+  le lever du jour, durées d'allumage conservées. Le soleil se couche à 19 h 51
+  à la mi-septembre et à 16 h 41 au solstice — sans ce replacement, la façade
+  s'allumerait trois heures après la tombée de la nuit, quand le reste de la
+  rue s'éteint. Les bornes de la fenêtre horaire suivent le soleil elles aussi :
+  `coucher-30`, `lever+15`.
 - **Une soirée crédible dès le premier jour.** Une lampe sans passé reçoit une
   soirée inventée, calée sur le coucher du soleil, avec une probabilité de
   participation par lampe et un flottement aléatoire. Un plugin qui ne fait rien
@@ -26,7 +33,9 @@ Faire croire que la maison est habitée, en rejouant ce qu'elle fait d'habitude.
   par-dessus. Les lampes d'un même groupe bougent donc ensemble, et aucune
   soirée n'est annulée, quel que soit le réglage.
 - **Il n'apprend pas ses propres inventions.** Les journées pendant lesquelles
-  il a piloté les lampes sont écartées de l'apprentissage.
+  il a piloté les lampes sont écartées de l'apprentissage. Les journées où
+  aucune lampe du groupe n'a bougé le sont aussi : la maison était vide, et
+  sans ce tri chaque absence rendrait la simulation un peu plus timide.
 - **Un départ qui décrit la maison, pas une heure.** Une liste de commandes
   d'information avec test et valeur attendue, en ET ou en OU — l'alarme est
   armée et personne n'est présent — avec délai de confirmation et délai de
@@ -39,7 +48,13 @@ Faire croire que la maison est habitée, en rejouant ce qu'elle fait d'habitude.
   messages de Jeedom et la lampe est laissée de côté un quart d'heure, au lieu
   d'être retentée chaque minute sans que personne n'en sache rien.
 - **Un aperçu qui ne ment pas.** Aujourd'hui, demain, après-demain, lampe par
-  lampe, calculés par le code qui jouera réellement le plan.
+  lampe, calculés par le code qui jouera réellement le plan, et dessinés en
+  barres de vingt-quatre heures : une barre montre d'un coup six lampes qui
+  s'allument à la même minute, ce qu'aucune liste d'heures ne montre.
+- **La soirée répétée en deux minutes.** Un bouton joue le plan du jour pour de
+  vrai sur les lampes, compressé sur deux minutes, puis les remet comme elles
+  étaient. C'est le seul moyen de vérifier qu'elles répondent sans attendre le
+  soir.
 
 ## Ce qu'il ne fait pas
 
@@ -116,7 +131,7 @@ l'historique, exécuter des commandes et tenir des compteurs.
 ## Contrôles
 
 ```bash
-php tests/run.php            # 133 contrôles hors ligne, sans Jeedom
+php tests/run.php            # 161 contrôles hors ligne, sans Jeedom
 php tests/check-classes.php  # les pièges du cœur, par réflexion
 ```
 

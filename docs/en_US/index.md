@@ -66,7 +66,9 @@ Jeedom only writes a history row when the value changes: a guest-room lamp
 switched on six evenings out of twenty-eight has history for those six days
 only. The other twenty-two count just as much, and the plugin counts them —
 without them it would average over the active days alone, and would switch that
-lamp on almost every evening while claiming to replay it faithfully.
+lamp on almost every evening while claiming to replay it faithfully. Two
+exceptions, described further down: days earlier than the start of the history,
+and days on which the whole group stayed still.
 
 A lamp that publishes no state can never be learned, only invented. The
 **Health** page counts them.
@@ -152,6 +154,12 @@ house would otherwise lose the very lamp that never goes out.
   to the setting. At 0 every evening looks alike; at 100 they move by up to
   three quarters of an hour either way. No evening is ever cancelled, whatever
   the setting: variability shifts, it does not remove.
+- **Follow the sun** — ticked by default. Learned habits are repositioned
+  against the sunset and the sunrise of the day being replayed, instead of
+  being replayed by the clock. That is the next section, and it is the box not
+  to untick.
+- **Ignore empty days** — ticked by default. A day on which no lamp in the
+  group moved is taken for an empty house, and does not enter the learning.
 
 **The lamps of one group shift together.** That is what the group's share of the
 draw does: on an evening when you come home late, the whole house lights up
@@ -160,6 +168,59 @@ correlation between lamps the model produces, and it is the one most sorely
 missed by whoever watches a façade several evenings running — the order in which
 the rooms light up must have a visible cause. The per-lamp share, smaller, keeps
 the group from moving as a single block.
+
+## Habits follow the sun
+
+A habit is learned in one season and replayed in another. In Nivelles the sun
+sets at 19:51 in mid-September and at 16:41 at the solstice: three hours and
+ten minutes apart on the clock, five hours eighteen between June and December,
+plus the one-hour jump when the clocks change. An evening learned in autumn and
+replayed as it stands in December would therefore light the façade three hours
+after nightfall — just as the rest of the street goes dark, which is noticed
+far more than a dark house.
+
+**Follow the sun**, in the *Learning* tab, repositions habits on the sun of the
+day being replayed. The profile keeps the average sunset of the days that built
+it; the day's plan is shifted by the gap between that average sunset and
+today's. Switch-ons before noon follow the sunrise, those after noon the
+sunset: morning and evening do not move the same way as the days shorten.
+
+The **duration** of a switch-on is preserved: a switch-on is moved whole, with
+its switch-off, and not bound by bound — otherwise an evening would last an
+hour longer in December than in June without anyone asking for it. The shift is
+capped at four hours: beyond that it is no longer a season that has changed, it
+is a setting that has gone astray.
+
+The repositioning happens before the time window, never after: a window applied
+to the times of another season would cut in the wrong place.
+
+Untick the box if you would rather have the learned times replayed by the
+clock, exactly as they were observed.
+
+## The days that teach nothing
+
+**Ignore empty days** — a day on which **no** lamp in the group moved is an
+empty house: nobody switched anything on, nobody switched anything off, and an
+absence has nothing to teach a presence simulation. It is left out, and for
+every lamp of the group at once.
+
+The distinction is worth reading: a day on which *this* lamp was not used while
+others were moving remains a genuine observation, and it is kept. A guest room
+dark on a Tuesday when the living room came on says something about the house.
+It is the stillness of the **whole** group, and that alone, that gives the
+absence away.
+
+Without that sorting, every week of holiday makes the simulation a little more
+timid: empty days pull the switch-on rates down, and the effect adds up — the
+more you are away, the less the simulated house lights up, which is the exact
+opposite of what is asked of it. The number of days left out is shown at the
+top of the table in the *Learning* tab.
+
+Days **earlier than the start of the lamp's history** do not count either,
+whatever the box says. A command historized yesterday has nothing to say about
+the twenty-seven days before: counting them as so many "never on" days would be
+an invented observation, and it would pull the profile down just as much as the
+days away.
 
 ## When it has not learned yet
 
@@ -240,7 +301,21 @@ armed.
 ## The time window and the safeguards
 
 **Nothing before** / **Nothing after** — the allowed window, 07:00 to 23:30 by
-default. It shifts nothing: a switch-on planned outside the window is
+default. Each bound takes a fixed time — `07:00` — **or** a solar time:
+`sunset-30`, `sunrise+15`. A fixed bound makes little sense for a setting meant
+to protect the night: "nothing before 07:00" forbids two hours of broad
+daylight in June, when the sun rises at 05:31, and lets an hour of pitch dark
+through in December. `sunrise+15` holds both seasons with nothing to come back
+to.
+
+Both English and French are accepted — `sunset-30` or `coucher-30`,
+`sunrise+15` or `lever+15` — and the bound is stored in English, like the
+core's tags (`#sunset#`): what is saved does not depend on the language of
+whoever typed it. The offset is capped at twelve hours. The time the bound
+gives today is shown next to the field, because `sunset-30` means nothing until
+you have seen it come out at 21:21.
+
+The window shifts nothing: a switch-on planned outside the window is
 **dropped**, never postponed, because pushing everything to the opening minute
 would be noticed from the street far more than a lamp that does not come on. A
 lamp still on at closing time, on the other hand, is switched off — that is the
@@ -319,8 +394,46 @@ with the very code that will play the plan — two implementations, one for the
 preview and one for execution, would diverge on the first setting added, and the
 preview would lie without anyone knowing.
 
+Every lamp gets a **twenty-four-hour bar** showing its periods on, with the
+allowed window in the background, a graduation every six hours, a mark at
+sunset and, for today, a mark at the current time. The list of times stays
+under the bar, with the time spent on and the number of switch-ons.
+
+A list is read line by line; a bar is read at a glance, and shows what no list
+shows: six lamps coming on at the same minute, or a two-hour hole in the middle
+of the evening.
+
 Looking at tomorrow does not change tonight: previewing another day leaves the
 day's plan untouched.
+
+## Rehearsing the evening in two minutes
+
+The **Rehearse the evening in two minutes** button, next to the preview, plays
+the day's plan **for real** on your lamps, compressed into two minutes. They
+really do switch on and off: it is the only way to check that they all answer,
+and in the planned order, without waiting for the evening. Every lamp's state
+is recorded before starting and put back at the end — a rehearsal must leave no
+trace behind it.
+
+What is spread over those two minutes is the range where something happens:
+from the first to the last change of the plan, with a margin, and not the whole
+time window. A window opening at 07:00 whose first switch-on falls at 19:26
+would otherwise leave you waiting a hundred seconds in front of dark lamps, out
+of the hundred and twenty the rehearsal lasts.
+
+The run is driven by the browser, one request per change: **closing the page
+stops everything**, and so does switching to another group. A single request
+sleeping for two minutes would end in a timeout, and closing the tab has to be
+enough to interrupt whatever is commanding your lamps.
+
+A progress bar and the log of the changes are shown during the rehearsal.
+**Stop the rehearsal** interrupts it and puts the lamps back the way they were,
+without waiting for the end.
+
+The button refuses to start while the simulation is running: two plans played
+at the same time on the same lamps would contradict each other. It also refuses
+when there is nothing to play today, rather than keeping you waiting two
+minutes in front of a dark façade.
 
 ## The plugin configuration
 
@@ -362,6 +475,17 @@ group shift of **Variability**: one does not come home at the same time every
 evening, and when one comes home late the whole house lights up late. Lower the
 variability to tighten the evenings, raise it to spread them out; none of them
 is cancelled either way.
+
+**In December it switches on far earlier than in September.** That is **Follow
+the sun**: learned habits are repositioned on the day's sunset, which has moved
+back by more than three hours in the meantime. It is exactly what the house
+does when it is lived in.
+
+**Does the rehearsal really switch the lamps on?** Yes, for real: it plays the
+day's plan on your lamps, compressed into two minutes. It is the only way to
+check that they answer without waiting for the evening. They are put back the
+way they were at the end, and the simulation has to be stopped for the button
+to agree to start.
 
 **My lamp does not show up in the selector.** It is most likely missing
 something to switch it off: the plugin offers no lamp it would not know how to

@@ -72,6 +72,11 @@ class simulationpresenceintelligentbe extends eqLogic {
 
     public static $_operators = array('==', '!=', '>', '>=', '<', '<=');
 
+    /* Les groupes dont les profils ont déjà été refaits dans cette requête.
+     * Le souligné est obligatoire : DB::save() prendrait une propriété sans
+     * lui pour une colonne de la table. */
+    public static $_rebuilt = array();
+
     /* ==================================================================== CRON */
 
     /*
@@ -372,6 +377,13 @@ class simulationpresenceintelligentbe extends eqLogic {
         return $clean;
     }
 
+    /*
+     * Les bornes de la fenêtre horaire.
+     *
+     * Une heure fixe, ou une heure de soleil : « sunset-30 » vaut mieux que
+     * « 07:00 » pour une borne censée protéger la nuit, puisque la nuit ne
+     * tombe pas à la même heure en juin et en décembre.
+     */
     public static function cleanWindow($_window) {
         $clean = array('start' => '07:00', 'end' => '23:30');
         if (!is_array($_window)) {
@@ -381,9 +393,9 @@ class simulationpresenceintelligentbe extends eqLogic {
             if (!isset($_window[$key])) {
                 continue;
             }
-            $time = simulationpresenceintelligentbeSun::cleanTime($_window[$key]);
-            if ($time !== '') {
-                $clean[$key] = $time;
+            $bound = simulationpresenceintelligentbeSun::cleanBound($_window[$key]);
+            if ($bound !== '') {
+                $clean[$key] = $bound;
             }
         }
         return $clean;
@@ -409,10 +421,21 @@ class simulationpresenceintelligentbe extends eqLogic {
     }
 
     public static function cleanLearning($_learning) {
-        $clean = array('depth' => self::DEFAULT_DEPTH, 'min_days' => simulationpresenceintelligentbeProfile::MIN_DAYS);
+        $clean = array(
+            'depth'      => self::DEFAULT_DEPTH,
+            'min_days'   => simulationpresenceintelligentbeProfile::MIN_DAYS,
+            /* Suivre le soleil plutôt que l'horloge, et écarter les journées
+             * d'absence : les deux sont actifs par défaut parce que les
+             * désactiver dégrade la simulation, et que personne ne pense à
+             * cocher une case dont il ne soupçonne pas le problème. */
+            'anchor'     => 1,
+            'skip_quiet' => 1,
+        );
         if (!is_array($_learning)) {
             return $clean;
         }
+        $clean['anchor'] = (isset($_learning['anchor']) && $_learning['anchor'] == 0) ? 0 : 1;
+        $clean['skip_quiet'] = (isset($_learning['skip_quiet']) && $_learning['skip_quiet'] == 0) ? 0 : 1;
         if (isset($_learning['depth']) && $_learning['depth'] !== '') {
             $clean['depth'] = max(7, min(365, (int) $_learning['depth']));
         }
@@ -544,6 +567,16 @@ class simulationpresenceintelligentbe extends eqLogic {
 
         $byDate = array();
         $state = 0;
+        /*
+         * La date à partir de laquelle on sait quelque chose.
+         *
+         * Une commande historisée hier n'a rien à dire des vingt-sept jours
+         * précédents. Les compter comme des journées « toujours éteinte »
+         * serait une observation inventée, et elle tirerait le profil vers le
+         * bas exactement comme le faisait le fait de sauter les journées
+         * muettes — dans l'autre sens.
+         */
+        $known = null;
         foreach ($rows as $row) {
             $timestamp = strtotime($row->getDatetime());
             if ($timestamp === false) {
@@ -553,15 +586,23 @@ class simulationpresenceintelligentbe extends eqLogic {
             if ($timestamp < $from) {
                 /* Le point que le coeur ajoute pour l'état initial est daté
                  * deux secondes avant le début de la plage : il appartient à la
-                 * veille et ne décrit que l'état de départ. */
+                 * veille, et sa seule présence prouve que l'historique
+                 * commence avant la plage demandée. */
                 $state = $value;
+                $known = date('Y-m-d', $from);
                 continue;
             }
             $date = date('Y-m-d', $timestamp);
+            if ($known === null) {
+                $known = $date;
+            }
             if (!isset($byDate[$date])) {
                 $byDate[$date] = array();
             }
             $byDate[$date][] = array('t' => simulationpresenceintelligentbeSun::minuteOfDay($timestamp), 'v' => $value);
+        }
+        if ($known === null) {
+            return $days;
         }
 
         /*
@@ -575,6 +616,9 @@ class simulationpresenceintelligentbe extends eqLogic {
          * presque tous les soirs — en annonçant la rejouer fidèlement.
          */
         foreach (self::dateRange($depth) as $date) {
+            if ($date < $known) {
+                continue;
+            }
             $day = array(array('t' => 0, 'v' => $state));
             if (isset($byDate[$date])) {
                 foreach ($byDate[$date] as $point) {
@@ -605,23 +649,59 @@ class simulationpresenceintelligentbe extends eqLogic {
      * Refaire le profil de chaque lampe et le mettre en cache.
      *
      * Une fois par nuit : c'est la seule opération coûteuse du plugin, une
-     * requête d'historique par lampe et par journée de profondeur.
+     * requête d'historique par lampe. Le travail se fait pour tout le groupe
+     * d'un coup, et non lampe par lampe, parce que repérer les journées
+     * d'absence demande de les regarder toutes ensemble.
      */
     public function buildProfiles() {
-        $learning = $this->getConfiguration('learning', array());
-        $depth = isset($learning['depth']) ? (int) $learning['depth'] : self::DEFAULT_DEPTH;
-        $built = 0;
+        $learning = self::cleanLearning($this->getConfiguration('learning'));
 
+        $lamps = array();
+        $collected = array();
         foreach ($this->getConfiguration('lamps', array()) as $lamp) {
             if ($lamp['enabled'] != 1 || $lamp['state'] === null) {
                 continue;
             }
-            $days = $this->collectDays($lamp['state'], $depth);
-            $profile = simulationpresenceintelligentbeProfile::build($days);
-            cache::set($this->profileKey($lamp['eq']), json_encode($profile), self::CACHE_TTL);
-            $built++;
+            $lamps[] = $lamp;
+            $collected[(string) $lamp['eq']] = $this->collectDays($lamp['state'], $learning['depth']);
         }
-        return $built;
+        if (count($lamps) == 0) {
+            return 0;
+        }
+
+        $quiet = ($learning['skip_quiet'] == 1)
+            ? simulationpresenceintelligentbeProfile::quietDays($collected)
+            : array();
+        if (count($quiet) > 0) {
+            log::add(__CLASS__, 'debug', $this->getHumanName() . ' : ' . count($quiet) . ' '
+                . __('journée(s) sans aucun mouvement écartée(s) de l\'apprentissage', __FILE__));
+        }
+
+        $suns = $this->sunRange($learning['depth']);
+
+        foreach ($lamps as $lamp) {
+            $days = $collected[(string) $lamp['eq']];
+            foreach ($quiet as $date) {
+                unset($days[$date]);
+            }
+            $profile = simulationpresenceintelligentbeProfile::build($days, $suns);
+            $profile['quiet'] = count($quiet);
+            cache::set($this->profileKey($lamp['eq']), json_encode($profile), self::CACHE_TTL);
+        }
+        return count($lamps);
+    }
+
+    /* Le lever et le coucher du soleil pour chaque journée de la plage
+     * d'apprentissage. C'est la référence par rapport à laquelle les habitudes
+     * seront replacées le jour où on les rejoue. */
+    public function sunRange($_depth) {
+        $latitude  = config::byKey('info::latitude');
+        $longitude = config::byKey('info::longitude');
+        $suns = array();
+        foreach (self::dateRange($_depth) as $date) {
+            $suns[$date] = simulationpresenceintelligentbeSun::sun(strtotime($date . ' 12:00:00'), $latitude, $longitude);
+        }
+        return $suns;
     }
 
     /* Le profil d'une lampe, construit à la demande s'il n'est pas en cache :
@@ -635,14 +715,34 @@ class simulationpresenceintelligentbe extends eqLogic {
                 return $profile;
             }
         }
-        if ($_lamp['state'] === null) {
+        /* Une lampe en sommeil ou sans état n'a pas de profil, et n'en aura
+         * pas : reconstruire le groupe pour elle ferait, sur la page
+         * Apprentissage qui les décrit toutes, une construction complète par
+         * lampe désactivée. */
+        if ($_lamp['state'] === null || (isset($_lamp['enabled']) && $_lamp['enabled'] != 1)) {
             return simulationpresenceintelligentbeProfile::build(array());
         }
-        $learning = $this->getConfiguration('learning', array());
-        $depth = isset($learning['depth']) ? (int) $learning['depth'] : self::DEFAULT_DEPTH;
-        $profile = simulationpresenceintelligentbeProfile::build($this->collectDays($_lamp['state'], $depth));
-        cache::set($this->profileKey($_lamp['eq']), json_encode($profile), self::CACHE_TTL);
-        return $profile;
+
+        /* En défaut de cache, tout le groupe est refait d'un coup : les
+         * journées d'absence ne se repèrent qu'en regardant toutes les lampes
+         * ensemble, et reconstruire lampe par lampe donnerait un profil
+         * différent de celui de la nuit.
+         *
+         * Une seule fois par requête : sans ce garde-fou, un groupe dont
+         * aucune lampe n'a d'historique referait le tour complet pour chacune
+         * d'elles. */
+        if (!isset(self::$_rebuilt[$this->getId()])) {
+            self::$_rebuilt[$this->getId()] = true;
+            $this->buildProfiles();
+        }
+        $raw = cache::byKey($this->profileKey($_lamp['eq']))->getValue('');
+        if ($raw !== '') {
+            $profile = json_decode($raw, true);
+            if (is_array($profile) && isset($profile['buckets'])) {
+                return $profile;
+            }
+        }
+        return simulationpresenceintelligentbeProfile::build(array());
     }
 
     /* ============================================================ PLAN DU JOUR */
@@ -675,24 +775,27 @@ class simulationpresenceintelligentbe extends eqLogic {
         if ($timestamp === false) {
             $timestamp = time();
         }
-        $window   = $this->getConfiguration('window', array());
-        $learning = $this->getConfiguration('learning', array());
+        $window   = self::cleanWindow($this->getConfiguration('window'));
+        $learning = self::cleanLearning($this->getConfiguration('learning'));
         $invent   = $this->getConfiguration('invent', array());
-        $minDays  = isset($learning['min_days']) ? (int) $learning['min_days'] : simulationpresenceintelligentbeProfile::MIN_DAYS;
+        $minDays  = $learning['min_days'];
 
-        $start = simulationpresenceintelligentbeSun::timeToMinute(isset($window['start']) ? $window['start'] : '');
-        $end   = simulationpresenceintelligentbeSun::timeToMinute(isset($window['end']) ? $window['end'] : '');
+        /* Le soleil du jour d'abord : les bornes de la fenêtre peuvent s'y
+         * référer, et c'est lui qui replacera les habitudes apprises. */
+        $sun = simulationpresenceintelligentbeSun::sun($timestamp, config::byKey('info::latitude'), config::byKey('info::longitude'));
+
+        $start = simulationpresenceintelligentbeSun::resolveBound($window['start'], $sun, 0);
+        $end   = simulationpresenceintelligentbeSun::resolveBound($window['end'], $sun, simulationpresenceintelligentbeSun::DAY_MINUTES - 1);
         $invent = is_array($invent) ? $invent : array();
         foreach (array('bedtime' => 23 * 60, 'wake' => 7 * 60) as $key => $default) {
             $minute = simulationpresenceintelligentbeSun::timeToMinute(isset($invent[$key]) ? $invent[$key] : '');
             $invent[$key] = ($minute === null) ? $default : $minute;
         }
         $options = simulationpresenceintelligentbeProfile::cleanOptions(array_merge($invent, array(
-            'window_start' => ($start === null) ? 0 : $start,
-            'window_end'   => ($end === null) ? simulationpresenceintelligentbeSun::DAY_MINUTES - 1 : $end,
+            'window_start' => $start,
+            'window_end'   => $end,
         )));
 
-        $sun = simulationpresenceintelligentbeSun::sun($timestamp, config::byKey('info::latitude'), config::byKey('info::longitude'));
         $weekday = (int) date('N', $timestamp);
 
         /*
@@ -735,7 +838,17 @@ class simulationpresenceintelligentbe extends eqLogic {
             $bucket  = simulationpresenceintelligentbeProfile::bucketFor($profile, $weekday, $minDays);
 
             if ($bucket['days'] >= $minDays && $bucket['minutes'] > 0) {
-                $events = simulationpresenceintelligentbeProfile::generate($bucket, $options, $seed, $shift);
+                /*
+                 * Les habitudes sont replacées par rapport au soleil du jour.
+                 * Une soirée apprise à la mi-septembre, où le soleil se couche
+                 * à 19 h 51, serait rejouée telle quelle au solstice, où il se
+                 * couche à 16 h 41 : la façade s'allumerait trois heures après
+                 * la tombée de la nuit, quand le reste de la rue s'éteint.
+                 */
+                $anchor = ($learning['anchor'] == 1)
+                    ? simulationpresenceintelligentbeProfile::anchorDelta($bucket, $sun)
+                    : null;
+                $events = simulationpresenceintelligentbeProfile::generate($bucket, $options, $seed, $shift, $anchor);
                 $source = 'learned';
                 $plan['learned']++;
             } else {
@@ -1202,6 +1315,158 @@ class simulationpresenceintelligentbe extends eqLogic {
             }
         }
         return null;
+    }
+
+    /* ============================================================ RÉPÉTITION */
+
+    /*
+     * Jouer la soirée du jour en deux minutes, pour de vrai.
+     *
+     * C'est le seul moyen de vérifier qu'une lampe répond, que la bonne
+     * commande a été retenue et que le groupe ne s'allume pas d'un bloc, sans
+     * attendre 19 h 30 — et le premier soir, c'est ce qui fait la différence
+     * entre croire que ça marche et le savoir.
+     *
+     * Le déroulé est piloté par le navigateur, une requête par changement : une
+     * seule requête qui dormirait deux minutes finirait en délai dépassé, et
+     * fermer la page doit suffire à tout arrêter.
+     *
+     * L'état des lampes est relevé avant de commencer, et remis en place à la
+     * fin — une répétition ne doit pas laisser de traces.
+     */
+    const REHEARSAL_TTL = 1800;
+
+    public function rehearsalKey() {
+        return __CLASS__ . '::rehearsal::' . $this->getId();
+    }
+
+    public function rehearsalPlan($_duration) {
+        $date = date('Y-m-d');
+        $plan = $this->planFor($date);
+
+        $sun = simulationpresenceintelligentbeSun::sun(time(), config::byKey('info::latitude'), config::byKey('info::longitude'));
+        $window = self::cleanWindow($this->getConfiguration('window'));
+        $start = simulationpresenceintelligentbeSun::resolveBound($window['start'], $sun, 0);
+        $end   = simulationpresenceintelligentbeSun::resolveBound($window['end'], $sun, simulationpresenceintelligentbeSun::DAY_MINUTES - 1);
+
+        $names = array();
+        $snapshot = array();
+        foreach ($this->getConfiguration('lamps', array()) as $lamp) {
+            if ($lamp['enabled'] != 1) {
+                continue;
+            }
+            $names[(string) $lamp['eq']] = $lamp['name'];
+            $snapshot[(string) $lamp['eq']] = array(
+                'name'   => $lamp['name'],
+                'on'     => $lamp['on'],
+                'off'    => $lamp['off'],
+                'toggle' => $lamp['toggle'],
+                'state'  => $lamp['state'],
+                'value'  => simulationpresenceintelligentbeLamps::readState($lamp['state']),
+            );
+        }
+        $steps = array();
+        foreach ($plan['lamps'] as $key => $entry) {
+            foreach ($entry['events'] as $event) {
+                $steps[] = array(
+                    'eq'     => (int) $key,
+                    'name'   => isset($names[$key]) ? $names[$key] : '',
+                    'minute' => (int) $event['t'],
+                    'time'   => simulationpresenceintelligentbeSun::minuteToTime($event['t']),
+                    'value'  => ($event['v'] == 1) ? 1 : 0,
+                );
+            }
+        }
+        usort($steps, function ($_a, $_b) {
+            return $_a['minute'] - $_b['minute'];
+        });
+
+        /*
+         * On étale la plage où il se passe quelque chose, et non la fenêtre
+         * entière : une fenêtre de 07 h 00 à 21 h 51 dont le premier allumage
+         * tombe à 19 h 26 ferait attendre cent secondes devant des lampes
+         * éteintes, sur les cent vingt que dure la répétition.
+         */
+        $from = $start;
+        $to = $end;
+        if (count($steps) > 0) {
+            $premier = $steps[0]['minute'];
+            $dernier = $steps[count($steps) - 1]['minute'];
+            $marge = max(5, (int) round(($dernier - $premier) * 0.1));
+            $from = max($start, $premier - $marge);
+            $to = min($end, $dernier + $marge);
+        }
+        $span = max(1, $to - $from);
+        foreach ($steps as $index => $step) {
+            $position = max(0, min(1, ($step['minute'] - $from) / $span));
+            $steps[$index]['at'] = (int) round($position * $_duration * 1000);
+        }
+
+        /* L'instantané n'est posé que s'il y a quelque chose à jouer : sinon
+         * une répétition vide laisserait derrière elle un état de répétition
+         * en cours, et le bouton d'arrêt remettrait en place une soirée qui
+         * n'a jamais eu lieu. */
+        if (count($steps) > 0) {
+            cache::set($this->rehearsalKey(), json_encode($snapshot), self::REHEARSAL_TTL);
+        }
+
+        return array(
+            'duration' => $_duration * 1000,
+            'steps'    => $steps,
+            'from'     => simulationpresenceintelligentbeSun::minuteToTime($from),
+            'to'       => simulationpresenceintelligentbeSun::minuteToTime($to),
+            'lamps'    => count($snapshot),
+        );
+    }
+
+    public function rehearsalStep($_eqId, $_value) {
+        if (cache::byKey($this->rehearsalKey())->getValue('') === '') {
+            throw new Exception(__('Aucune répétition en cours.', __FILE__));
+        }
+        foreach ($this->getConfiguration('lamps', array()) as $lamp) {
+            if ((int) $lamp['eq'] !== (int) $_eqId || $lamp['enabled'] != 1) {
+                continue;
+            }
+            /* Un état d'exécution jetable : une répétition ne doit pas laisser
+             * croire à la simulation qu'elle a déjà donné ses ordres. */
+            $runtime = array('lamps' => array());
+            return array(
+                'done' => $this->orderLamp($lamp, ($_value == 1) ? 1 : 0, time(), $runtime) ? 1 : 0,
+                'name' => $lamp['name'],
+            );
+        }
+        throw new Exception(__('Cette lampe ne fait pas partie du groupe.', __FILE__));
+    }
+
+    public function rehearsalStop() {
+        $raw = cache::byKey($this->rehearsalKey())->getValue('');
+        cache::delete($this->rehearsalKey());
+        if ($raw === '') {
+            return 0;
+        }
+        $snapshot = json_decode($raw, true);
+        if (!is_array($snapshot)) {
+            return 0;
+        }
+
+        $now = time();
+        $runtime = array('lamps' => array());
+        $remises = 0;
+        foreach ($snapshot as $key => $entry) {
+            $lamp = $this->snapshotLamp($key, $entry);
+            if ($lamp === null) {
+                continue;
+            }
+            $target = ($lamp['value'] === null) ? 0 : (int) $lamp['value'];
+            $actual = simulationpresenceintelligentbeLamps::readState($lamp['state']);
+            if ($actual !== null && $actual == $target) {
+                continue;
+            }
+            if ($this->orderLamp($lamp, $target, $now, $runtime)) {
+                $remises++;
+            }
+        }
+        return $remises;
     }
 
     /* ============================================================== AFFICHAGE */
