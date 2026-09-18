@@ -1,0 +1,34 @@
+{
+    "id": "simulationpresenceintelligentbe",
+    "name": "Simulation de présence intelligente",
+    "pluginVersion": "1.0",
+    "description": {
+        "fr_FR": "Faire croire que la maison est habitée en rejouant ce qu'elle fait d'habitude. Le plugin lit l'historique de vos lampes et de vos prises, en tire les heures auxquelles chacune s'allume et s'éteint selon le jour de semaine, et rejoue cette journée avec ce qu'il faut de hasard pour qu'elle ne se répète jamais. Une lampe sans passé reçoit une soirée inventée, calée sur le coucher du soleil. Le départ se donne à la main ou sur une condition — l'alarme est armée et personne n'est là.",
+        "en_US": "Make the house look lived in by replaying what it usually does. The plugin reads the history of your lamps and sockets, learns when each one goes on and off depending on the day of the week, and replays that day with enough randomness never to repeat itself. A lamp with no past gets an invented evening built around sunset. Simulation starts by hand or on a condition, such as the alarm being armed while nobody is home."
+    },
+    "licence": "AGPL",
+    "author": "sMug (Jérôme Fafchamps)",
+    "require": "4.4",
+    "requireOsVersion": "11",
+    "category": "security",
+    "index": "simulationpresenceintelligentbe",
+    "hasDependency": 0,
+    "hasOwnDeamon": 0,
+    "maxDependancyInstallTime": 5,
+    "eventjs": 0,
+    "issue": "https://github.com/replicatorbe/jeedom-plugin-simulationpresenceintelligentbe/issues",
+    "documentation": "https://github.com/replicatorbe/jeedom-plugin-simulationpresenceintelligentbe/blob/master/docs/#language#/index.md",
+    "documentation_beta": "https://github.com/replicatorbe/jeedom-plugin-simulationpresenceintelligentbe/blob/beta/docs/#language#/index.md",
+    "changelog": "https://github.com/replicatorbe/jeedom-plugin-simulationpresenceintelligentbe/blob/master/docs/#language#/changelog.md",
+    "changelog_beta": "https://github.com/replicatorbe/jeedom-plugin-simulationpresenceintelligentbe/blob/beta/docs/#language#/changelog.md",
+    "language": [
+        "fr_FR",
+        "en_US"
+    ],
+    "compatibility": [
+        "smart",
+        "rpi",
+        "docker",
+        "diy"
+    ]
+}
