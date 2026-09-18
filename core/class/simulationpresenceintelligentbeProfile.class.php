@@ -82,6 +82,16 @@ class simulationpresenceintelligentbeProfile {
     const SHIFT_GROUP = 30;
     const SHIFT_LAMP  = 15;
 
+    /* Midi sépare le matin du soir. Un allumage d'avant midi suit le lever du
+     * soleil, un allumage d'après midi suit le coucher : c'est la seule façon
+     * de rejouer en décembre une habitude apprise en septembre sans éclairer la
+     * façade trois heures après la tombée de la nuit. */
+    const SUN_PIVOT = 720;
+
+    /* Au-delà, ce n'est plus une saison qui a changé mais un réglage qui a
+     * dérapé : le replacement est borné à quatre heures. */
+    const ANCHOR_MAX = 240;
+
     /* ==================================================== TIRAGE REPRODUCTIBLE */
 
     /*
@@ -242,7 +252,7 @@ class simulationpresenceintelligentbeProfile {
      * Le plan du jour prend le jour de semaine quand il est assez fourni, et
      * retombe sur l'ensemble sinon.
      */
-    public static function build($_days) {
+    public static function build($_days, $_suns = array()) {
         $profile = array(
             'days'    => 0,
             'first'   => '',
@@ -251,6 +261,9 @@ class simulationpresenceintelligentbeProfile {
         );
         if (!is_array($_days)) {
             return $profile;
+        }
+        if (!is_array($_suns)) {
+            $_suns = array();
         }
 
         $dates = array_keys($_days);
@@ -262,13 +275,14 @@ class simulationpresenceintelligentbeProfile {
                 continue;
             }
             $day = self::buildDay($_days[$date]);
+            $sun = isset($_suns[$date]) ? $_suns[$date] : null;
             $weekday = (string) ((int) date('N', $timestamp));
 
             if (!isset($profile['buckets'][$weekday])) {
                 $profile['buckets'][$weekday] = self::emptyBucket();
             }
-            self::addDay($profile['buckets'][$weekday], $day);
-            self::addDay($profile['buckets']['all'], $day);
+            self::addDay($profile['buckets'][$weekday], $day, $sun);
+            self::addDay($profile['buckets']['all'], $day, $sun);
 
             $profile['days']++;
             if ($profile['first'] === '') {
@@ -290,12 +304,23 @@ class simulationpresenceintelligentbeProfile {
             'start_at'  => array_fill(0, self::SLOTS, 0),
             'stop_at'   => array_fill(0, self::SLOTS, 0),
             'minutes'   => 0,
+            /* Le soleil des journées apprises : c'est la référence par rapport
+             * à laquelle on replacera les habitudes le jour où on les rejoue. */
+            'sun_days'    => 0,
+            'sunrise_sum' => 0,
+            'sunset_sum'  => 0,
         );
     }
 
-    private static function addDay(&$_bucket, $_day) {
+    private static function addDay(&$_bucket, $_day, $_sun = null) {
         $_bucket['days']++;
         $_bucket['minutes'] += $_day['minutes'];
+        if (is_array($_sun) && isset($_sun['sunrise'], $_sun['sunset'])
+            && $_sun['sunrise'] !== null && $_sun['sunset'] !== null) {
+            $_bucket['sun_days']++;
+            $_bucket['sunrise_sum'] += (int) $_sun['sunrise'];
+            $_bucket['sunset_sum']  += (int) $_sun['sunset'];
+        }
         for ($slot = 0; $slot < self::SLOTS; $slot++) {
             $_bucket['occupancy'][$slot] += $_day['occupancy'][$slot];
             $_bucket['starts'][$slot]    += $_day['starts'][$slot];
@@ -397,6 +422,134 @@ class simulationpresenceintelligentbeProfile {
         return max(0.0, min(1.0, $rate));
     }
 
+    /*
+     * Les journées où aucune lampe du groupe n'a bougé.
+     *
+     * Une maison vide, presque à coup sûr : vacances, week-end ailleurs,
+     * hospitalisation. Les garder dans l'apprentissage enseigne au plugin
+     * « ici, on n'allume pas », et l'effet est cumulatif — chaque absence rend
+     * la simulation un peu plus timide, jusqu'à ce qu'elle ne fasse plus rien.
+     *
+     * La nuance compte : une journée où *cette* lampe n'a pas servi alors que
+     * d'autres bougeaient reste une vraie observation, et elle est conservée.
+     * C'est l'immobilité de tout le groupe qui trahit l'absence.
+     *
+     * $_collected : identifiant de lampe => ('Y-m-d' => liste de points).
+     */
+    public static function quietDays($_collected) {
+        $dates = array();
+        $actives = array();
+        foreach ($_collected as $days) {
+            if (!is_array($days)) {
+                continue;
+            }
+            foreach ($days as $date => $points) {
+                $dates[$date] = true;
+                foreach ($points as $point) {
+                    /* La minute zéro est l'état reporté de la veille, pas un
+                     * changement : seule une transition compte comme un signe
+                     * de vie. */
+                    if ((int) $point['t'] > 0) {
+                        $actives[$date] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        $quiet = array();
+        foreach (array_keys($dates) as $date) {
+            if (!isset($actives[$date])) {
+                $quiet[] = $date;
+            }
+        }
+        sort($quiet);
+        return $quiet;
+    }
+
+    /* Le soleil moyen des journées apprises, ou null si on ne le sait pas. */
+    public static function meanSun($_bucket, $_key) {
+        if (!isset($_bucket['sun_days']) || $_bucket['sun_days'] <= 0) {
+            return null;
+        }
+        $somme = ($_key == 'sunrise') ? $_bucket['sunrise_sum'] : $_bucket['sunset_sum'];
+        return (int) round($somme / $_bucket['sun_days']);
+    }
+
+    /*
+     * De combien replacer les habitudes apprises, pour le jour qu'on rejoue.
+     *
+     * L'écart entre le soleil du jour et le soleil moyen des journées apprises.
+     * À Nivelles, le coucher passe de 19 h 51 à la mi-septembre à 16 h 41 au
+     * solstice : sans ce replacement, une habitude apprise en automne allume la
+     * façade trois heures après la tombée de la nuit en décembre — au moment où
+     * le reste de la rue s'éteint, ce qui se remarque bien plus qu'une maison
+     * noire.
+     *
+     * Le décalage est borné : au-delà de quelques heures, ce n'est plus une
+     * saison qui a changé mais un réglage qui a dérapé.
+     */
+    public static function anchorDelta($_bucket, $_sun) {
+        $delta = array('sunrise' => 0, 'sunset' => 0);
+        if (!is_array($_sun)) {
+            return $delta;
+        }
+        foreach (array('sunrise', 'sunset') as $key) {
+            $moyenne = self::meanSun($_bucket, $key);
+            $jour = isset($_sun[$key]) ? $_sun[$key] : null;
+            if ($moyenne === null || $jour === null) {
+                continue;
+            }
+            $delta[$key] = max(-self::ANCHOR_MAX, min(self::ANCHOR_MAX, $jour - $moyenne));
+        }
+        return $delta;
+    }
+
+    /*
+     * Replace les allumages par rapport au soleil, et applique le décalage du
+     * jour.
+     *
+     * Le travail se fait par paires : un allumage du soir qui s'éteint après
+     * minuit doit être déplacé en entier, sinon sa durée changerait avec la
+     * saison. Le côté de la journée où tombe l'allumage décide de la référence.
+     */
+    public static function anchorEvents($_events, $_anchor, $_shift = 0) {
+        $anchor = is_array($_anchor) ? $_anchor : array('sunrise' => 0, 'sunset' => 0);
+        $sunrise = isset($anchor['sunrise']) ? (int) $anchor['sunrise'] : 0;
+        $sunset  = isset($anchor['sunset']) ? (int) $anchor['sunset'] : 0;
+        $shift = (int) $_shift;
+
+        $events = array();
+        $onAt = null;
+        foreach ($_events as $event) {
+            $minute = (int) $event['t'];
+            if ($event['v'] == 1) {
+                if ($onAt === null) {
+                    $onAt = $minute;
+                }
+                continue;
+            }
+            if ($onAt === null) {
+                continue;
+            }
+            $delta = $shift + (($onAt < self::SUN_PIVOT) ? $sunrise : $sunset);
+            $events[] = array('t' => self::inDay($onAt + $delta), 'v' => 1);
+            $events[] = array('t' => self::inDay($minute + $delta), 'v' => 0);
+            $onAt = null;
+        }
+        if ($onAt !== null) {
+            $delta = $shift + (($onAt < self::SUN_PIVOT) ? $sunrise : $sunset);
+            $events[] = array('t' => self::inDay($onAt + $delta), 'v' => 1);
+        }
+        return $events;
+    }
+
+    /* Une minute ramenée dans la journée : un allumage repoussé au lendemain
+     * appartiendrait au plan du lendemain, qui a déjà le sien. */
+    public static function inDay($_minute) {
+        return max(0, min(simulationpresenceintelligentbeSun::DAY_MINUTES - 1, (int) $_minute));
+    }
+
     /* ============================================================ GÉNÉRATION */
 
     /*
@@ -417,7 +570,7 @@ class simulationpresenceintelligentbeProfile {
      *   window_start / window_end : minutes, la fenêtre autorisée
      *   min_on / max_on           : bornes de durée d'un allumage
      */
-    public static function generate($_bucket, $_options, $_seed, $_shift = 0) {
+    public static function generate($_bucket, $_options, $_seed, $_shift = 0, $_anchor = null) {
         $options = self::cleanOptions($_options);
         $state   = self::seed($_seed);
         $events  = array();
@@ -485,7 +638,10 @@ class simulationpresenceintelligentbeProfile {
             }
         }
 
-        return self::applyWindow(self::shiftEvents($events, $_shift), $options);
+        /* Le replacement saisonnier d'abord, la fenêtre ensuite : une fenêtre
+         * appliquée à des heures d'une autre saison couperait au mauvais
+         * endroit. */
+        return self::applyWindow(self::anchorEvents($events, $_anchor, $_shift), $options);
     }
 
     /*

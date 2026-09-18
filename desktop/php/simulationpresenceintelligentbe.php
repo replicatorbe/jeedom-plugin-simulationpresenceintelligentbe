@@ -265,15 +265,18 @@ $eqLogics = eqLogic::byType($plugin->getId());
 								<div class="col-sm-4">
 									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="window" data-l3key="start" placeholder="07:00">
 								</div>
+								<div class="col-sm-3"><span class="help-block spiWindowResolved" data-bound="start" style="margin:6px 0 0 0;"></span></div>
 							</div>
 							<div class="form-group">
 								<label class="col-sm-5 control-label">{{Rien après}}</label>
 								<div class="col-sm-4">
 									<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="window" data-l3key="end" placeholder="23:30">
 								</div>
+								<div class="col-sm-3"><span class="help-block spiWindowResolved" data-bound="end" style="margin:6px 0 0 0;"></span></div>
 							</div>
 							<div class="form-group">
 								<div class="col-sm-12">
+									<span class="help-block" style="margin:0;">{{Une heure — 07:00 — ou une heure de soleil : « coucher-30 », « lever+15 ». Une borne fixe n'a guère de sens ici : le soleil se couche à 19 h 51 à la mi-septembre et à 16 h 41 au solstice.}}</span>
 									<span class="help-block" style="margin:0;">{{Une lampe encore allumée à l'heure de fermeture est éteinte. Un allumage prévu hors fenêtre est abandonné, jamais repoussé : tout repousser à la même minute se remarquerait de la rue bien plus qu'une lampe qui ne s'allume pas.}}</span>
 								</div>
 							</div>
@@ -351,6 +354,20 @@ $eqLogics = eqLogic::byType($plugin->getId());
 								</div>
 								<div class="col-sm-12">
 									<span class="help-block" style="margin:0;">{{L'écart autorisé aux habitudes observées. À 0, toutes les soirées se ressemblent ; à 100, elles s'éloignent franchement sans quitter les habitudes de la maison.}}</span>
+								</div>
+							</div>
+							<div class="form-group">
+								<label class="col-sm-6 control-label">{{Suivre le soleil}}</label>
+								<div class="col-sm-6">
+									<input type="checkbox" class="eqLogicAttr" data-l1key="configuration" data-l2key="learning" data-l3key="anchor" checked>
+									<span class="help-block" style="margin:0;">{{Les habitudes apprises sont replacées par rapport au coucher et au lever du soleil du jour rejoué. Sans cela, une soirée apprise en septembre allumerait la façade trois heures après la tombée de la nuit en décembre.}}</span>
+								</div>
+							</div>
+							<div class="form-group">
+								<label class="col-sm-6 control-label">{{Ignorer les journées vides}}</label>
+								<div class="col-sm-6">
+									<input type="checkbox" class="eqLogicAttr" data-l1key="configuration" data-l2key="learning" data-l3key="skip_quiet" checked>
+									<span class="help-block" style="margin:0;">{{Une journée où aucune lampe du groupe n'a bougé est une maison vide : elle n'entre pas dans l'apprentissage. Sans cela, chaque absence rend la simulation un peu plus timide.}}</span>
 								</div>
 							</div>
 							<div class="form-group">
@@ -452,6 +469,14 @@ $eqLogics = eqLogic::byType($plugin->getId());
 									<a class="btn btn-default btn-sm spiPreview" data-day="2">{{Après-demain}}</a>
 									<a class="btn btn-warning btn-sm" id="bt_spiReplan"><i class="fas fa-dice"></i> {{Tirer un autre plan}}</a>
 									<span class="help-block" style="margin:4px 0 0 0;">{{L'aperçu est calculé par le serveur, avec le code qui jouera réellement le plan.}}</span>
+								</div>
+							</div>
+							<div class="form-group">
+								<div class="col-sm-12">
+									<a class="btn btn-info btn-sm" id="bt_spiRehearse"><i class="fas fa-fast-forward"></i> {{Répéter la soirée en deux minutes}}</a>
+									<a class="btn btn-danger btn-sm" id="bt_spiRehearseStop" style="display:none;"><i class="fas fa-stop"></i> {{Arrêter la répétition}}</a>
+									<span class="help-block" style="margin:4px 0 0 0;">{{La répétition allume et éteint vraiment vos lampes, le plan du jour compressé sur deux minutes. C'est le seul moyen de vérifier qu'elles répondent sans attendre le soir. Les lampes sont remises comme elles étaient à la fin, et fermer la page arrête tout.}}</span>
+									<div id="div_spiRehearse" style="margin-top:8px;"></div>
 								</div>
 							</div>
 							<div class="form-group">

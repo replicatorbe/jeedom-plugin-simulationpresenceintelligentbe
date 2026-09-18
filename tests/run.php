@@ -521,6 +521,101 @@ verifieVrai('« Volet lampe » n\'est pas une lampe', !$LAMPS::looksLikeLight('V
 verifieVrai('« Store lumière salon » non plus',      !$LAMPS::looksLikeLight('Store lumière salon'));
 verifieVrai('« Plafonnier salon » en est une',        $LAMPS::looksLikeLight('Plafonnier salon'));
 
+/* ---- 10 --------------------------------------------------------------------
+ * Le soleil. Sans lui, une habitude apprise en septembre allume la façade
+ * trois heures après la tombée de la nuit en décembre — au moment où le reste
+ * de la rue s'éteint, ce qui se remarque bien plus qu'une maison noire.
+ */
+echo "\nBornes de fenêtre relatives au soleil\n";
+verifie('une heure fixe reste une heure fixe',  SUN::cleanBound('07:00'), '07:00');
+verifie('« coucher-30 » devient sunset-30',     SUN::cleanBound('coucher-30'), 'sunset-30');
+verifie('l\'anglais est accepté aussi',         SUN::cleanBound('sunset-30'), 'sunset-30');
+verifie('les espaces et la casse sont tolérés', SUN::cleanBound('Coucher - 30'), 'sunset-30');
+verifie('« lever+15 » devient sunrise+15',      SUN::cleanBound('lever+15'), 'sunrise+15');
+verifie('sans décalage, le signe est posé',     SUN::cleanBound('coucher'), 'sunset+0');
+verifie('n\'importe quoi est refusé',           SUN::cleanBound('demain matin'), '');
+verifie('un décalage absurde est borné',        SUN::cleanBound('coucher-5000'), 'sunset-720');
+
+$hiver = SUN::sun(strtotime('2026-12-21 12:00:00'), LAT, LON);
+verifie('coucher du solstice',                  SUN::minuteToTime($hiver['sunset']), '16:41');
+verifie('« sunset-30 » se résout',              SUN::resolveBound('sunset-30', $hiver, 999), $hiver['sunset'] - 30);
+verifie('une heure fixe ne dépend pas du jour', SUN::resolveBound('07:00', $hiver, 999), 420);
+verifie('une borne vide rend le défaut',        SUN::resolveBound('', $hiver, 999), 999);
+/* Au cercle polaire, le soleil ne se couche pas : la fenêtre doit se replier
+ * sur quelque chose plutôt que de disparaître. */
+verifie('sans coucher, le défaut s\'applique',
+    SUN::resolveBound('sunset-30', array('sunrise' => null, 'sunset' => null), 999), 999);
+
+echo "\nReplacement saisonnier\n";
+/* Une lampe allumée trente minutes après le coucher, apprise sur quatre
+ * semaines de septembre. */
+$joursSoleil = array();
+$soleils = array();
+for ($i = 0; $i < 28; $i++) {
+    $date = date('Y-m-d', strtotime('2026-09-18 -' . $i . ' day'));
+    $soleil = SUN::sun(strtotime($date . ' 12:00:00'), LAT, LON);
+    $soleils[$date] = $soleil;
+    $joursSoleil[$date] = journee($soleil['sunset'] + 30, 23 * 60);
+}
+$profilSoleil = BRAIN::build($joursSoleil, $soleils);
+$seauSoleil = BRAIN::bucketFor($profilSoleil, 1, 3);
+
+verifieVrai('le coucher moyen des journées apprises est connu',
+    BRAIN::meanSun($seauSoleil, 'sunset') !== null);
+verifieVrai('et il tombe bien en soirée',
+    BRAIN::meanSun($seauSoleil, 'sunset') > 19 * 60);
+
+$delta = BRAIN::anchorDelta($seauSoleil, $hiver);
+verifieVrai('en décembre, le replacement est négatif', $delta['sunset'] < -120);
+verifie('un jour sans soleil connu ne replace rien',
+    BRAIN::anchorDelta($seauSoleil, array('sunrise' => null, 'sunset' => null))['sunset'], 0);
+
+$sansAncrage = BRAIN::generate($seauSoleil, array('window_start' => 0, 'window_end' => 1439), 'hiver|1');
+$avecAncrage = BRAIN::generate($seauSoleil, array('window_start' => 0, 'window_end' => 1439), 'hiver|1', 0, $delta);
+verifieVrai('sans ancrage, la lampe s\'allume bien après la nuit',
+    $sansAncrage[0]['t'] > $hiver['sunset'] + 180);
+verifieVrai('avec ancrage, elle suit le coucher',
+    abs($avecAncrage[0]['t'] - ($hiver['sunset'] + 30)) <= 60);
+verifie('et la durée de la soirée est conservée',
+    $avecAncrage[1]['t'] - $avecAncrage[0]['t'], $sansAncrage[1]['t'] - $sansAncrage[0]['t']);
+
+/* Le matin suit le lever, le soir suit le coucher : les deux ne bougent pas du
+ * même nombre de minutes, et mélanger les deux décalerait le petit-déjeuner
+ * avec l'heure du dîner. */
+$deuxCotes = BRAIN::anchorEvents(array(
+    array('t' => 7 * 60, 'v' => 1), array('t' => 8 * 60, 'v' => 0),
+    array('t' => 20 * 60, 'v' => 1), array('t' => 22 * 60, 'v' => 0),
+), array('sunrise' => 60, 'sunset' => -120));
+verifie('le matin décalé du lever',  $deuxCotes[0]['t'], 8 * 60);
+verifie('le soir décalé du coucher', $deuxCotes[2]['t'], 18 * 60);
+verifie('les durées sont intactes',  $deuxCotes[3]['t'] - $deuxCotes[2]['t'], 2 * 60);
+
+$borne = BRAIN::anchorEvents(array(array('t' => 1430, 'v' => 1), array('t' => 1439, 'v' => 0)),
+    array('sunrise' => 0, 'sunset' => 600));
+verifie('un décalage ne sort pas de la journée', $borne[1]['t'], 1439);
+
+echo "\nJournées d'absence\n";
+/* Une maison vide enseigne « ici, on n'allume pas », et l'effet est cumulatif :
+ * chaque vacance rendrait la simulation un peu plus timide. */
+$groupe = array(
+    'salon'   => array(
+        '2026-09-01' => array(array('t' => 0, 'v' => 0), array('t' => 1140, 'v' => 1)),
+        '2026-09-02' => array(array('t' => 0, 'v' => 0)),
+        '2026-09-03' => array(array('t' => 0, 'v' => 0)),
+    ),
+    'cuisine' => array(
+        '2026-09-01' => array(array('t' => 0, 'v' => 0)),
+        '2026-09-02' => array(array('t' => 0, 'v' => 0)),
+        '2026-09-03' => array(array('t' => 0, 'v' => 0), array('t' => 1200, 'v' => 1)),
+    ),
+);
+$muettes = BRAIN::quietDays($groupe);
+verifie('une seule journée sans vie',            count($muettes), 1);
+verifie('et c\'est celle du milieu',             $muettes[0], '2026-09-02');
+verifie('un groupe totalement immobile est écarté en entier',
+    count(BRAIN::quietDays(array('a' => array('2026-09-01' => array(array('t' => 0, 'v' => 1)))))), 1);
+verifie('rien à écarter sur un groupe vide',     count(BRAIN::quietDays(array())), 0);
+
 echo "\n";
 if ($ko == 0) {
     echo "Tous les contrôles passent ($ok).\n";

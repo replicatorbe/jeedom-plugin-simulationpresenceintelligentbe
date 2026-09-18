@@ -65,7 +65,9 @@ Jeedom n'écrit une ligne d'historique qu'au changement de valeur : une lampe de
 chambre d'amis allumée six soirs sur vingt-huit n'a d'historique que ces six
 jours-là. Les vingt-deux autres comptent tout autant, et le plugin les compte —
 sans quoi il ne moyennerait que sur les jours actifs, et allumerait cette lampe
-presque tous les soirs en annonçant la rejouer fidèlement.
+presque tous les soirs en annonçant la rejouer fidèlement. Deux exceptions,
+décrites plus bas : les journées antérieures au début de l'historique, et
+celles où tout le groupe est resté immobile.
 
 Une lampe qui ne publie pas son état ne pourra jamais être apprise, seulement
 inventée. La page **Santé** les compte.
@@ -155,6 +157,13 @@ qui ne s'éteint jamais.
   elles bougent de trois quarts d'heure dans un sens ou dans l'autre. Aucune
   soirée n'est annulée, quel que soit le réglage : la variabilité décale, elle
   ne supprime pas.
+- **Suivre le soleil** — cochée par défaut. Les habitudes apprises sont
+  replacées par rapport au coucher et au lever du soleil du jour rejoué, au
+  lieu d'être rejouées à l'horloge. C'est la section suivante, et c'est la case
+  qu'il ne faut pas décocher.
+- **Ignorer les journées vides** — cochée par défaut. Une journée où aucune
+  lampe du groupe n'a bougé est tenue pour une maison vide, et n'entre pas dans
+  l'apprentissage.
 
 **Les lampes d'un même groupe se décalent ensemble.** C'est ce que fait la part
 de groupe du tirage : un soir où l'on rentre tard, c'est toute la maison qui
@@ -163,6 +172,60 @@ seule corrélation entre lampes que le modèle produise, et c'est celle qui manq
 le plus à qui regarde une façade plusieurs soirs de suite — l'ordre dans lequel
 les pièces s'éclairent doit avoir une cause visible. La part propre à chaque
 lampe, plus petite, empêche que le groupe entier bouge d'un seul bloc.
+
+## Les habitudes suivent le soleil
+
+Une habitude est apprise à une saison et rejouée à une autre. À Nivelles, le
+soleil se couche à 19 h 51 à la mi-septembre et à 16 h 41 au solstice : trois
+heures et dix minutes d'écart à l'horloge, cinq heures dix-huit entre juin et
+décembre, plus le saut d'une heure au changement d'heure. Une soirée apprise en
+automne et rejouée telle quelle en décembre allumerait donc la façade trois
+heures après la tombée de la nuit — au moment où le reste de la rue s'éteint,
+ce qui se remarque bien plus qu'une maison noire.
+
+**Suivre le soleil**, dans l'onglet *Apprentissage*, replace les habitudes sur
+le soleil du jour rejoué. Le profil garde le coucher moyen des journées qui
+l'ont formé ; le plan du jour est décalé de l'écart entre ce coucher moyen et
+celui d'aujourd'hui. Les allumages d'avant midi suivent le lever, ceux d'après
+midi le coucher : le matin et le soir ne se déplacent pas du même côté quand
+les jours raccourcissent.
+
+La **durée** des allumages, elle, est conservée : un allumage est déplacé en
+entier, avec son extinction, et non borne par borne — sinon une soirée durerait
+une heure de plus en décembre qu'en juin sans que personne l'ait voulu. Le
+décalage est borné à quatre heures : au-delà, ce n'est plus une saison qui a
+changé, c'est un réglage qui a dérapé.
+
+Le replacement se fait avant la fenêtre horaire, jamais après : une fenêtre
+appliquée à des heures d'une autre saison couperait au mauvais endroit.
+
+Décochez la case si vous préférez que les heures apprises soient rejouées à
+l'horloge, exactement telles qu'elles ont été observées.
+
+## Les journées dont il n'apprend rien
+
+**Ignorer les journées vides** — une journée où **aucune** lampe du groupe n'a
+bougé est une maison vide : personne n'a allumé, personne n'a éteint, et une
+absence n'a rien à apprendre à une simulation de présence. Elle est écartée, et
+pour toutes les lampes du groupe à la fois.
+
+La nuance vaut d'être lue : une journée où *cette* lampe n'a pas servi alors
+que d'autres bougeaient reste une vraie observation, et elle est conservée. La
+chambre d'amis éteinte un mardi où le salon s'est allumé dit quelque chose de
+la maison. C'est l'immobilité de **tout** le groupe, et elle seule, qui trahit
+l'absence.
+
+Sans ce tri, chaque semaine de vacances rend la simulation un peu plus timide :
+les journées vides tirent les taux d'allumage vers le bas, et l'effet est
+cumulatif — plus on s'absente, moins la maison simulée s'allume, c'est-à-dire
+l'inverse exact de ce qu'on lui demande. Le nombre de journées écartées
+s'affiche en tête du tableau de l'onglet *Apprentissage*.
+
+Les journées **antérieures au début de l'historique** de la lampe ne comptent
+pas non plus, et cela quelle que soit la case. Une commande historisée hier n'a
+rien à dire des vingt-sept jours précédents : les compter comme autant de
+journées « jamais allumée » serait une observation inventée, qui tirerait le
+profil vers le bas tout autant que les journées d'absence.
 
 ## Quand il n'a pas encore appris
 
@@ -247,7 +310,20 @@ l'alarme est toujours armée.
 ## La fenêtre horaire et les garde-fous
 
 **Rien avant** / **Rien après** — la fenêtre autorisée, 07:00 à 23:30 par
-défaut. Elle ne décale rien : un allumage prévu hors fenêtre est
+défaut. Chaque borne accepte une heure fixe — `07:00` — **ou** une heure de
+soleil : `coucher-30`, `lever+15`. Une borne fixe a peu de sens pour un réglage
+censé protéger la nuit : « rien avant 07:00 » interdit deux heures de plein
+jour en juin, où le soleil se lève à 05 h 31, et laisse passer une heure de
+nuit noire en décembre. `lever+15` tient les deux saisons sans qu'on y revienne.
+
+La saisie accepte le français comme l'anglais — `coucher-30` ou `sunset-30`,
+`lever+15` ou `sunrise+15` — et la borne est rangée en anglais, comme les tags
+du cœur (`#sunset#`) : ce qui est enregistré ne dépend pas de la langue de
+celui qui l'a tapée. Le décalage est borné à douze heures. L'heure que la borne
+donne aujourd'hui s'affiche à côté du champ, parce que `coucher-30` ne veut
+rien dire tant qu'on ne l'a pas vu valoir 21 h 21.
+
+La fenêtre ne décale rien : un allumage prévu hors fenêtre est
 **abandonné**, jamais repoussé, parce que tout repousser à la minute
 d'ouverture se remarquerait de la rue bien plus qu'une lampe qui ne s'allume
 pas. En revanche, une lampe encore allumée à l'heure de fermeture est éteinte
@@ -329,8 +405,47 @@ calculé par le serveur, avec le code qui jouera réellement le plan — deux
 implémentations, une pour l'aperçu et une pour l'exécution, divergeraient au
 premier réglage ajouté, et l'aperçu mentirait sans qu'on le sache.
 
+Chaque lampe a une **barre de vingt-quatre heures** où se lisent ses périodes
+allumées, avec la fenêtre autorisée en fond, une graduation toutes les six
+heures, un repère au coucher du soleil et, pour aujourd'hui, un repère à
+l'heure qu'il est. La liste des heures reste affichée sous la barre, avec le
+temps allumé et le nombre d'allumages.
+
+Une liste se lit ligne à ligne ; une barre se lit d'un coup, et montre ce
+qu'aucune liste ne montre : six lampes qui s'allument à la même minute, ou un
+trou de deux heures en pleine soirée.
+
 Regarder demain ne change pas ce soir : l'aperçu d'une autre journée ne touche
 pas au plan du jour.
+
+## Répéter la soirée en deux minutes
+
+Le bouton **Répéter la soirée en deux minutes**, à côté de l'aperçu, joue le
+plan du jour **pour de vrai** sur vos lampes, compressé sur deux minutes. Elles
+s'allument et s'éteignent réellement : c'est le seul moyen de vérifier qu'elles
+répondent toutes, et dans l'ordre prévu, sans attendre le soir. L'état de
+chaque lampe est relevé avant de commencer et remis en place à la fin — une
+répétition ne doit pas laisser de traces derrière elle.
+
+Ce qui est étalé sur les deux minutes est la plage où il se passe quelque
+chose : du premier au dernier changement du plan, avec une marge, et non la
+fenêtre horaire entière. Une fenêtre ouverte à 07 h 00 dont le premier allumage
+tombe à 19 h 26 ferait sinon attendre cent secondes devant des lampes éteintes,
+sur les cent vingt que dure la répétition.
+
+Le déroulé est piloté par le navigateur, une requête par changement : **fermer
+la page arrête tout**, et changer de groupe aussi. Une seule requête qui
+dormirait deux minutes finirait en délai dépassé, et il faut que refermer
+l'onglet suffise à interrompre ce qui commande vos lampes.
+
+Une barre de progression et le journal des changements s'affichent pendant la
+répétition. **Arrêter la répétition** l'interrompt et remet les lampes comme
+elles étaient, sans attendre la fin.
+
+Le bouton refuse de démarrer si la simulation est en cours : deux plans joués
+en même temps sur les mêmes lampes se contrediraient. Il refuse aussi s'il n'y
+a rien à jouer aujourd'hui, plutôt que de faire patienter deux minutes devant
+une façade noire.
 
 ## La configuration du plugin
 
@@ -373,6 +488,17 @@ c'est le décalage de groupe de la **Variabilité** : on ne rentre pas à la mê
 heure tous les soirs, et quand on rentre tard, toute la maison s'allume tard.
 Baissez la variabilité pour resserrer les soirées, montez-la pour les écarter ;
 aucune n'est annulée pour autant.
+
+**En décembre, il allume bien plus tôt qu'en septembre.** C'est **Suivre le
+soleil** : les habitudes apprises sont replacées sur le coucher du jour, qui a
+reculé de plus de trois heures entre-temps. C'est exactement ce que fait la
+maison quand elle est habitée.
+
+**La répétition allume-t-elle vraiment les lampes ?** Oui, pour de bon : elle
+joue le plan du jour sur vos lampes, compressé sur deux minutes. C'est le seul
+moyen de vérifier qu'elles répondent sans attendre le soir. Elles sont remises
+comme elles étaient à la fin, et la simulation doit être arrêtée pour que le
+bouton accepte de démarrer.
 
 **Ma lampe n'apparaît pas dans le sélecteur.** Il lui manque probablement de
 quoi l'éteindre : le plugin n'en propose aucune qu'il ne saurait pas éteindre.

@@ -918,9 +918,30 @@ function simulationpresenceintelligentbeRefreshLearning(_button) {
   if (id === null) { return }
 
   simulationpresenceintelligentbeAjax('learning', { id: id }, function (result) {
+    /* Ce que « coucher-30 » vaut ce soir : une borne solaire ne veut rien dire
+       tant qu'on ne voit pas l'heure qu'elle donne. */
+    if (isset(result.window)) {
+      var bornes = document.querySelectorAll('.spiWindowResolved')
+      for (var b = 0; b < bornes.length; b++) {
+        var quelle = bornes[b].getAttribute('data-bound')
+        var valeur = isset(result.window[quelle]) ? result.window[quelle] : ''
+        bornes[b].textContent = (valeur.indexOf('(') === -1) ? '' : valeur.replace(/^[^(]*\(/, '→ ').replace(/\)$/, '')
+      }
+    }
+
     var body = document.querySelector('#table_spiLearning tbody')
     if (body === null) { return }
     body.innerHTML = ''
+
+    if (isset(result.quiet) && result.quiet > 0) {
+      var muettes = document.createElement('tr')
+      var cellule = document.createElement('td')
+      cellule.colSpan = 4
+      cellule.appendChild(simulationpresenceintelligentbeText('span', 'help-block',
+        result.quiet + ' {{journée(s) sans aucun mouvement écartée(s) de l\'apprentissage : maison vide.}}'))
+      muettes.appendChild(cellule)
+      body.appendChild(muettes)
+    }
 
     if (result.lamps.length === 0) {
       var row = document.createElement('tr')
@@ -1005,6 +1026,87 @@ function simulationpresenceintelligentbeRefreshLearning(_button) {
   }, { button: _button, silent: true })
 }
 
+/* ======================================================= LA JOURNÉE EN BARRE */
+
+/* Une journée de 24 h dessinée en une barre.
+
+   Une liste d'heures se lit ligne à ligne ; une barre se lit d'un coup, et
+   montre ce qu'aucune liste ne montre : six lampes qui s'allument à la même
+   minute, ou un trou de deux heures en pleine soirée. Tout est en pourcentage
+   de la journée, donc rien à recalculer si la fenêtre change. */
+function simulationpresenceintelligentbeDayBar(_steps, _options) {
+  var options = _options || {}
+  var jour = 1440
+
+  var barre = document.createElement('div')
+  barre.className = 'spiDayBar'
+  barre.style.cssText = 'position:relative;height:22px;border-radius:3px;overflow:hidden;'
+    + 'background:rgba(128,128,128,0.15);margin:3px 0;'
+
+  /* La fenêtre autorisée, en fond : ce qui est en dehors ne s'allumera jamais,
+     autant que ça se voie. */
+  if (isset(options.window)) {
+    var fenetre = document.createElement('div')
+    var debut = Math.max(0, Math.min(jour, options.window.start))
+    var fin = Math.max(debut, Math.min(jour, options.window.end))
+    fenetre.style.cssText = 'position:absolute;top:0;bottom:0;background:rgba(128,128,128,0.12);'
+      + 'left:' + (debut / jour * 100) + '%;width:' + ((fin - debut) / jour * 100) + '%;'
+    barre.appendChild(fenetre)
+  }
+
+  /* Les graduations toutes les six heures : sans repère, on ne sait pas si une
+     lampe s'allume à 19 h ou à 21 h. */
+  for (var h = 6; h < 24; h += 6) {
+    var trait = document.createElement('div')
+    trait.style.cssText = 'position:absolute;top:0;bottom:0;width:1px;background:rgba(128,128,128,0.35);'
+      + 'left:' + (h * 60 / jour * 100) + '%;'
+    barre.appendChild(trait)
+  }
+
+  /* Le coucher du soleil : c'est par rapport à lui que se juge une soirée. */
+  if (isset(options.sunset) && options.sunset !== null) {
+    var soleil = document.createElement('div')
+    soleil.title = '{{Coucher du soleil}}'
+    soleil.style.cssText = 'position:absolute;top:0;bottom:0;width:2px;background:#f0ad4e;opacity:0.9;'
+      + 'left:' + (options.sunset / jour * 100) + '%;'
+    barre.appendChild(soleil)
+  }
+
+  var debutAllumage = null
+  for (var i = 0; i < _steps.length; i++) {
+    var minute = _steps[i].minute
+    if (_steps[i].value === 1) {
+      if (debutAllumage === null) { debutAllumage = minute }
+      continue
+    }
+    if (debutAllumage === null) { continue }
+    var segment = document.createElement('div')
+    segment.title = simulationpresenceintelligentbeMinuteToTime(debutAllumage) + ' — ' + simulationpresenceintelligentbeMinuteToTime(minute)
+    segment.style.cssText = 'position:absolute;top:3px;bottom:3px;border-radius:2px;background:#f5b300;'
+      + 'left:' + (debutAllumage / jour * 100) + '%;'
+      + 'width:' + (Math.max(4, minute - debutAllumage) / jour * 100) + '%;'
+    barre.appendChild(segment)
+    debutAllumage = null
+  }
+
+  /* L'heure qu'il est, quand la barre montre aujourd'hui. */
+  if (options.now === true) {
+    var maintenant = new Date()
+    var repere = document.createElement('div')
+    repere.title = '{{Maintenant}}'
+    repere.style.cssText = 'position:absolute;top:0;bottom:0;width:2px;background:#d9534f;'
+      + 'left:' + ((maintenant.getHours() * 60 + maintenant.getMinutes()) / jour * 100) + '%;'
+    barre.appendChild(repere)
+  }
+
+  return barre
+}
+
+function simulationpresenceintelligentbeMinuteToTime(_minute) {
+  var m = Math.max(0, Math.min(1439, parseInt(_minute, 10)))
+  return ('0' + Math.floor(m / 60)).slice(-2) + ':' + ('0' + (m % 60)).slice(-2)
+}
+
 /* ==================================================================== APERÇU */
 
 function simulationpresenceintelligentbeShowPreview(_day, _button) {
@@ -1016,6 +1118,10 @@ function simulationpresenceintelligentbeShowPreview(_day, _button) {
   var iso = date.getFullYear() + '-'
     + ('0' + (date.getMonth() + 1)).slice(-2) + '-'
     + ('0' + date.getDate()).slice(-2)
+  var jourJ = new Date()
+  var aujourdhui = jourJ.getFullYear() + '-'
+    + ('0' + (jourJ.getMonth() + 1)).slice(-2) + '-'
+    + ('0' + jourJ.getDate()).slice(-2)
 
   simulationpresenceintelligentbeAjax('preview', { id: id, date: iso }, function (result) {
     var target = document.getElementById('div_spiPreview')
@@ -1050,26 +1156,158 @@ function simulationpresenceintelligentbeShowPreview(_day, _button) {
       if (lamp.steps.length === 0) {
         block.appendChild(simulationpresenceintelligentbeText('span', 'help-block', '{{éteinte toute la journée}}'))
       } else {
-        var line = document.createElement('div')
+        block.appendChild(simulationpresenceintelligentbeDayBar(lamp.steps, {
+          window: result.window,
+          sunset: result.sunset,
+          now: (result.date === aujourdhui)
+        }))
+        var heures = []
         for (var s = 0; s < lamp.steps.length; s++) {
-          var step = document.createElement('span')
-          step.className = 'label label-' + (lamp.steps[s].value === 1 ? 'success' : 'default')
-          step.style.marginRight = '4px'
-          step.textContent = (lamp.steps[s].value === 1 ? '▲ ' : '▼ ') + lamp.steps[s].time
-          line.appendChild(step)
+          heures.push((lamp.steps[s].value === 1 ? '▲' : '▼') + lamp.steps[s].time)
         }
-        block.appendChild(line)
         block.appendChild(simulationpresenceintelligentbeText('span', 'help-block',
-          Math.round(lamp.minutes / 6) / 10 + ' h {{allumée}}, ' + lamp.switches + ' {{allumage(s)}}'))
+          heures.join('  ') + '  —  ' + Math.round(lamp.minutes / 6) / 10 + ' h {{allumée}}, '
+          + lamp.switches + ' {{allumage(s)}}'))
       }
       target.appendChild(block)
     }
   }, { button: _button })
 }
 
+/* =============================================================== RÉPÉTITION */
+
+/* La répétition allume et éteint vraiment les lampes : le plan du jour joué en
+   deux minutes. Elle est pilotée d'ici, une requête par changement — une seule
+   requête qui dormirait deux minutes finirait en délai dépassé, et fermer la
+   page doit suffire à tout arrêter. */
+var simulationpresenceintelligentbeRehearsal = { timers: [], running: false, id: null }
+
+function simulationpresenceintelligentbeRehearsalCancelTimers() {
+  for (var i = 0; i < simulationpresenceintelligentbeRehearsal.timers.length; i++) {
+    clearTimeout(simulationpresenceintelligentbeRehearsal.timers[i])
+  }
+  simulationpresenceintelligentbeRehearsal.timers = []
+}
+
+function simulationpresenceintelligentbeRehearsalButtons(_running) {
+  var demarrer = document.getElementById('bt_spiRehearse')
+  var arreter = document.getElementById('bt_spiRehearseStop')
+  if (demarrer !== null) { demarrer.style.display = _running ? 'none' : '' }
+  if (arreter !== null) { arreter.style.display = _running ? '' : 'none' }
+}
+
+function simulationpresenceintelligentbeRehearsalStart(_button) {
+  var id = simulationpresenceintelligentbeCurrentId()
+  if (id === null) { return }
+  simulationpresenceintelligentbeWarnUnsaved()
+
+  /* Une répétition déjà lancée est arrêtée d'abord : deux déroulés en parallèle
+     enverraient des ordres contradictoires aux mêmes lampes. */
+  if (simulationpresenceintelligentbeRehearsal.running) {
+    simulationpresenceintelligentbeRehearsalFinish()
+  }
+
+  simulationpresenceintelligentbeAjax('rehearse', { id: id, duration: 120 }, function (result) {
+    var zone = document.getElementById('div_spiRehearse')
+    if (zone === null) { return }
+
+    simulationpresenceintelligentbeRehearsal.running = true
+    simulationpresenceintelligentbeRehearsal.id = id
+    simulationpresenceintelligentbeRehearsalButtons(true)
+
+    zone.innerHTML = ''
+    zone.appendChild(simulationpresenceintelligentbeText('div', '',
+      result.steps.length + ' {{changement(s)}}, {{de}} ' + result.from + ' {{à}} ' + result.to
+      + ' {{compressés sur}} ' + Math.round(result.duration / 1000) + ' {{secondes}}'))
+
+    var piste = document.createElement('div')
+    piste.style.cssText = 'height:6px;border-radius:3px;background:rgba(128,128,128,0.2);margin:6px 0;overflow:hidden;'
+    var jauge = document.createElement('div')
+    jauge.id = 'div_spiRehearseGauge'
+    jauge.style.cssText = 'height:6px;width:0;background:#5bc0de;'
+    piste.appendChild(jauge)
+    zone.appendChild(piste)
+
+    var journal = document.createElement('div')
+    journal.id = 'div_spiRehearseLog'
+    journal.style.cssText = 'max-height:150px;overflow:auto;font-size:0.9em;'
+    zone.appendChild(journal)
+
+    /* La jauge est animée par le navigateur plutôt que par un minuteur : une
+       transition CSS reste fluide même si la page travaille. */
+    setTimeout(function () {
+      var g = document.getElementById('div_spiRehearseGauge')
+      if (g === null) { return }
+      g.style.transition = 'width ' + result.duration + 'ms linear'
+      g.style.width = '100%'
+    }, 50)
+
+    for (var i = 0; i < result.steps.length; i++) {
+      (function (_step) {
+        simulationpresenceintelligentbeRehearsal.timers.push(setTimeout(function () {
+          simulationpresenceintelligentbeRehearsalPlay(_step)
+        }, _step.at))
+      })(result.steps[i])
+    }
+
+    simulationpresenceintelligentbeRehearsal.timers.push(setTimeout(function () {
+      simulationpresenceintelligentbeRehearsalFinish()
+    }, result.duration + 1500))
+  }, { button: _button })
+}
+
+function simulationpresenceintelligentbeRehearsalPlay(_step) {
+  /* La page a changé sous nos pieds : on arrête tout plutôt que de continuer à
+     commander des lampes sans que personne ne le voie. */
+  if (document.getElementById('div_spiRehearse') === null) {
+    simulationpresenceintelligentbeRehearsalFinish()
+    return
+  }
+  if (!simulationpresenceintelligentbeRehearsal.running) { return }
+
+  simulationpresenceintelligentbeAjax('rehearseStep',
+    { id: simulationpresenceintelligentbeRehearsal.id, eq: _step.eq, value: _step.value },
+    function () {
+      var journal = document.getElementById('div_spiRehearseLog')
+      if (journal === null) { return }
+      var ligne = simulationpresenceintelligentbeText('div', '',
+        _step.time + '  ' + (_step.value === 1 ? '▲ ' : '▼ ') + _step.name)
+      ligne.style.color = (_step.value === 1) ? '#f5b300' : ''
+      journal.appendChild(ligne)
+      journal.scrollTop = journal.scrollHeight
+    },
+    { silent: true })
+}
+
+function simulationpresenceintelligentbeRehearsalFinish() {
+  simulationpresenceintelligentbeRehearsalCancelTimers()
+  if (!simulationpresenceintelligentbeRehearsal.running) { return }
+
+  var id = simulationpresenceintelligentbeRehearsal.id
+  simulationpresenceintelligentbeRehearsal.running = false
+  simulationpresenceintelligentbeRehearsalButtons(false)
+
+  simulationpresenceintelligentbeAjax('rehearseStop', { id: id }, function (result) {
+    jeedomUtils.showAlert({ message: result.summary, level: 'success' })
+    var journal = document.getElementById('div_spiRehearseLog')
+    if (journal !== null) {
+      journal.appendChild(simulationpresenceintelligentbeText('div', 'help-block', result.summary))
+      journal.scrollTop = journal.scrollHeight
+    }
+  })
+}
+
 /* ==================================================== POINTS D'ENTRÉE DU COEUR */
 
 function printEqLogic(_eqLogic) {
+  /* Changer de groupe pendant une répétition la laisserait tourner sur des
+     lampes qu'on ne regarde plus, et remettrait en place l'instantané du
+     mauvais groupe. */
+  if (simulationpresenceintelligentbeRehearsal.running) {
+    simulationpresenceintelligentbeRehearsalFinish()
+  }
+  simulationpresenceintelligentbeRehearsalButtons(false)
+
   simulationpresenceintelligentbeRendering = true
   try {
     var configuration = isset(_eqLogic.configuration) ? _eqLogic.configuration : {}
@@ -1216,6 +1454,16 @@ simulationpresenceintelligentbeContainer.addEventListener('click', function (eve
       jeedomUtils.showAlert({ message: result.summary, level: 'success' })
       simulationpresenceintelligentbeShowPreview(0, null)
     }, { button: target })
+    return
+  }
+
+  if (target = event.target.closest('#bt_spiRehearse')) {
+    simulationpresenceintelligentbeRehearsalStart(target)
+    return
+  }
+
+  if (event.target.closest('#bt_spiRehearseStop')) {
+    simulationpresenceintelligentbeRehearsalFinish()
     return
   }
 
